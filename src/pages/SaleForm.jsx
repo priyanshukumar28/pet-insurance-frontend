@@ -13,7 +13,7 @@ const COVERAGE_LABELS = {
   HOSPITALIZATION: 'Hospitalization',
   PER_DAY_LIMIT: 'Per Day Limit',
   OPD: 'OPD',
-  TB_LIABILITY: 'TB Liability',
+  TB_LIABILITY: 'TP Liability',
   INJURY_COVER: 'Injury Cover',
   ILLNESS_COVER: 'Illness Cover',
 };

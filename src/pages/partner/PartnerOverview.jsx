@@ -28,6 +28,8 @@ export default function PartnerOverview() {
 
   const k = data?.kpis;
   const conv = data?.conversion;
+  const trend = data?.trend;
+  const granularity = data?.range?.granularity;
   const convPct = (n) => (conv?.total ? `${Math.round((n / conv.total) * 1000) / 10}%` : '0%');
 
   return (
@@ -47,7 +49,7 @@ export default function PartnerOverview() {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {!data ? (
+        {!k ? (
           Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="h-[124px] animate-pulse rounded-xl2 border border-brand-line bg-white" />
           ))
@@ -68,7 +70,7 @@ export default function PartnerOverview() {
           subtitle="Proposals, certificates and premium over the selected period."
           right={
             <span className="rounded-full border border-brand-line px-2.5 py-1 text-[11px] font-semibold text-brand-slate">
-              {data?.range.granularity === 'month' ? 'Monthly' : 'Daily'}
+              {granularity === 'month' ? 'Monthly' : 'Daily'}
             </span>
           }
         >
@@ -77,11 +79,11 @@ export default function PartnerOverview() {
             <span className="inline-flex items-center gap-1.5"><LegendDot color="#22C55E" /> Certificates</span>
             <span className="inline-flex items-center gap-1.5"><LegendDot color="#8B5CF6" /> Premium (₹)</span>
           </div>
-          {data ? <TrendChart data={data.trend} granularity={data.range.granularity} /> : <div className="h-[260px] animate-pulse rounded-lg bg-brand-bg" />}
+          {trend ? <TrendChart data={trend} granularity={granularity} /> : <div className="h-[260px] animate-pulse rounded-lg bg-brand-bg" />}
         </Card>
 
         <Card title="Conversion" subtitle="How your proposals resolve.">
-          {data ? (
+          {conv ? (
             <div className="flex flex-col items-center gap-5">
               <DonutChart
                 segments={[

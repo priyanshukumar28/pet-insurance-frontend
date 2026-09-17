@@ -5,7 +5,6 @@ import toast from 'react-hot-toast';
 import api from '../api/axios.js';
 import Button from '../components/UI/Button.jsx';
 import { Field, Input, Textarea, Select, Label } from '../components/UI/Field.jsx';
-import { inr } from '../lib/format.js';
 import { fetchFile } from '../lib/download.js';
 
 const TABS = [
@@ -18,8 +17,33 @@ const TABS = [
 function round2(n) {
   return Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 }
-function gstOf(premium, pct) {
-  return round2(Number(premium || 0) * (1 + Number(pct || 0) / 100));
+// Rounds a rupee amount to 2 decimals, or to the nearest whole rupee when
+// `whole` is set (the admin's "round to nearest ₹" toggle).
+function roundMoney(n, whole) {
+  const v = Number(n) || 0;
+  return whole ? Math.round(v) : round2(v);
+}
+// Premium, GST %, GST amount (₹) and Premium-with-GST are one relationship —
+// once Premium is fixed, any ONE of {GST %, GST amount, Premium with GST}
+// determines the other two. These recompute the other two from whichever
+// field the admin just edited (see the onSlab*/onAddon* handlers below).
+function fromGstPercent(premium, gstPercent, whole) {
+  const p = Number(premium) || 0;
+  const pct = Number(gstPercent) || 0;
+  const premiumWithGst = roundMoney(p * (1 + pct / 100), whole);
+  return { gstAmount: roundMoney(premiumWithGst - p, whole), premiumWithGst };
+}
+function fromGstAmount(premium, gstAmount, whole) {
+  const p = Number(premium) || 0;
+  const amt = roundMoney(gstAmount, whole);
+  const premiumWithGst = roundMoney(p + amt, whole);
+  return { gstPercent: p > 0 ? round2((amt / p) * 100) : 0, premiumWithGst };
+}
+function fromPremiumWithGst(premium, premiumWithGst, whole) {
+  const p = Number(premium) || 0;
+  const withGst = roundMoney(premiumWithGst, whole);
+  const amt = roundMoney(withGst - p, whole);
+  return { gstAmount: amt, gstPercent: p > 0 ? round2((amt / p) * 100) : 0 };
 }
 
 function blankSlab(gst, secondaryKeys, benefits = []) {
@@ -28,6 +52,8 @@ function blankSlab(gst, secondaryKeys, benefits = []) {
     surgerySumInsured: '',
     premium: '',
     gstPercent: gst,
+    gstAmount: '',
+    premiumWithGst: '',
     coverages: Object.fromEntries(secondaryKeys.map((k) => [k, ''])),
     benefits: benefits.map((b) => ({ ...b })),
     isRecommended: false,
@@ -51,7 +77,15 @@ function reconcileSlabBenefits(slabBenefits, planBenefits) {
   return JSON.stringify(next) === JSON.stringify(slabBenefits || []) ? null : next;
 }
 function blankAddon(gst) {
-  return { name: '', description: '', additionalPremium: '', gstPercent: gst, coverageEffects: {} };
+  return {
+    name: '',
+    description: '',
+    additionalPremium: '',
+    gstPercent: gst,
+    gstAmount: '',
+    premiumWithGst: '',
+    coverageEffects: {},
+  };
 }
 
 export default function PlanBuilder() {
@@ -65,6 +99,9 @@ export default function PlanBuilder() {
   const [tab, setTab] = useState('coverages');
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(null);
+  // "Round to nearest ₹" toggle for the Premium/GST/Premium-with-GST linked
+  // fields below — applies to slabs and add-ons alike, live.
+  const [roundToRupee, setRoundToRupee] = useState(false);
 
   const secondaryKeys = useMemo(
     () => (catalog ? catalog.coverageFields.filter((c) => !c.primary).map((c) => c.key) : []),
@@ -107,25 +144,43 @@ export default function PlanBuilder() {
             exitAgeUnit: p.exitAgeUnit,
             waitingPeriods: p.waitingPeriods.length ? p.waitingPeriods : cat.defaultWaitingPeriods,
             commonBenefits: planBenefits,
-            variants: p.variants.map((v) => ({
-              id: v.id,
-              label: v.label,
-              surgerySumInsured: v.surgerySumInsured ?? '',
-              premium: v.premium ?? '',
-              gstPercent: v.gstPercent ?? gst,
-              coverages: Object.fromEntries(skeys.map((k) => [k, v.coverages?.[k] ?? ''])),
-              isRecommended: !!v.isRecommended,
-              benefits:
-                reconcileSlabBenefits(v.benefits?.length ? v.benefits : planBenefits, planBenefits) ||
-                (v.benefits?.length ? v.benefits : planBenefits).map((b) => ({ ...b })),
-            })),
-            addons: p.addons.map((a) => ({
-              name: a.name,
-              description: a.description || '',
-              additionalPremium: a.additionalPremium ?? '',
-              gstPercent: a.gstPercent ?? gst,
-              coverageEffects: a.coverageEffects || {},
-            })),
+            variants: p.variants.map((v) => {
+              const premium = v.premium ?? '';
+              const gstPercent = v.gstPercent ?? gst;
+              // Prefer the server's own stored premiumWithGst (exact, already
+              // persisted) over recomputing it, so an edit doesn't drift the
+              // displayed value from what's actually saved.
+              const premiumWithGst = v.premiumWithGst ?? fromGstPercent(premium, gstPercent, false).premiumWithGst;
+              return {
+                id: v.id,
+                label: v.label,
+                surgerySumInsured: v.surgerySumInsured ?? '',
+                premium,
+                gstPercent,
+                gstAmount: round2(Number(premiumWithGst) - Number(premium || 0)),
+                premiumWithGst,
+                coverages: Object.fromEntries(skeys.map((k) => [k, v.coverages?.[k] ?? ''])),
+                isRecommended: !!v.isRecommended,
+                benefits:
+                  reconcileSlabBenefits(v.benefits?.length ? v.benefits : planBenefits, planBenefits) ||
+                  (v.benefits?.length ? v.benefits : planBenefits).map((b) => ({ ...b })),
+              };
+            }),
+            addons: p.addons.map((a) => {
+              const additionalPremium = a.additionalPremium ?? '';
+              const gstPercent = a.gstPercent ?? gst;
+              const premiumWithGst =
+                a.additionalPremiumWithGst ?? fromGstPercent(additionalPremium, gstPercent, false).premiumWithGst;
+              return {
+                name: a.name,
+                description: a.description || '',
+                additionalPremium,
+                gstPercent,
+                gstAmount: round2(Number(premiumWithGst) - Number(additionalPremium || 0)),
+                premiumWithGst,
+                coverageEffects: a.coverageEffects || {},
+              };
+            }),
           });
         } else {
           setForm({
@@ -163,6 +218,22 @@ export default function PlanBuilder() {
   function setSlab(i, patch) {
     setForm((f) => ({ ...f, variants: f.variants.map((v, idx) => (idx === i ? { ...v, ...patch } : v)) }));
   }
+  // Premium is the anchor; editing it keeps the current GST % and recomputes
+  // the two derived fields.
+  function onSlabPremiumChange(i, value) {
+    setSlab(i, { premium: value, ...fromGstPercent(value, form.variants[i].gstPercent, roundToRupee) });
+  }
+  function onSlabGstPercentChange(i, value) {
+    setSlab(i, { gstPercent: value, ...fromGstPercent(form.variants[i].premium, value, roundToRupee) });
+  }
+  function onSlabGstAmountChange(i, value) {
+    const { gstPercent, premiumWithGst } = fromGstAmount(form.variants[i].premium, value, roundToRupee);
+    setSlab(i, { gstAmount: value, gstPercent, premiumWithGst });
+  }
+  function onSlabPremiumWithGstChange(i, value) {
+    const { gstAmount, gstPercent } = fromPremiumWithGst(form.variants[i].premium, value, roundToRupee);
+    setSlab(i, { premiumWithGst: value, gstAmount, gstPercent });
+  }
   function setSlabCoverage(i, key, value) {
     setForm((f) => ({
       ...f,
@@ -173,6 +244,20 @@ export default function PlanBuilder() {
   }
   function setAddon(i, patch) {
     setForm((f) => ({ ...f, addons: f.addons.map((a, idx) => (idx === i ? { ...a, ...patch } : a)) }));
+  }
+  function onAddonPremiumChange(i, value) {
+    setAddon(i, { additionalPremium: value, ...fromGstPercent(value, form.addons[i].gstPercent, roundToRupee) });
+  }
+  function onAddonGstPercentChange(i, value) {
+    setAddon(i, { gstPercent: value, ...fromGstPercent(form.addons[i].additionalPremium, value, roundToRupee) });
+  }
+  function onAddonGstAmountChange(i, value) {
+    const { gstPercent, premiumWithGst } = fromGstAmount(form.addons[i].additionalPremium, value, roundToRupee);
+    setAddon(i, { gstAmount: value, gstPercent, premiumWithGst });
+  }
+  function onAddonPremiumWithGstChange(i, value) {
+    const { gstAmount, gstPercent } = fromPremiumWithGst(form.addons[i].additionalPremium, value, roundToRupee);
+    setAddon(i, { premiumWithGst: value, gstAmount, gstPercent });
   }
   function setSlabBenefit(slabIdx, benefitKey, patch) {
     setForm((f) => ({
@@ -200,6 +285,23 @@ export default function PlanBuilder() {
     if (changed) setForm((f) => ({ ...f, variants }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form?.commonBenefits]);
+
+  // Re-derive GST amount / Premium-with-GST for every slab and add-on when the
+  // "round to nearest ₹" toggle changes, so it applies immediately rather than
+  // only on the next edit. Anchored on Premium + GST % (the pair that's always
+  // present), matching the default derivation used everywhere else.
+  useEffect(() => {
+    if (!form) return;
+    setForm((f) => ({
+      ...f,
+      variants: f.variants.map((v) => ({ ...v, ...fromGstPercent(v.premium, v.gstPercent, roundToRupee) })),
+      addons: f.addons.map((a) => ({
+        ...a,
+        ...fromGstPercent(a.additionalPremium, a.gstPercent, roundToRupee),
+      })),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roundToRupee]);
 
   function validate() {
     if (!form.insurerId) return 'Pick an insurer';
@@ -448,6 +550,17 @@ export default function PlanBuilder() {
         ))}
       </div>
 
+      {(tab === 'coverages' || tab === 'addons') && (
+        <label className="flex w-fit items-center gap-2 text-sm text-brand-slate">
+          <input
+            type="checkbox"
+            checked={roundToRupee}
+            onChange={(e) => setRoundToRupee(e.target.checked)}
+          />
+          Round GST &amp; premium-with-GST amounts to the nearest ₹
+        </label>
+      )}
+
       {/* Coverages / slabs */}
       {tab === 'coverages' && (
         <div className="space-y-4">
@@ -519,26 +632,34 @@ export default function PlanBuilder() {
 
               <div className="mt-4 grid grid-cols-2 gap-4 rounded-lg bg-brand-bg p-4 md:grid-cols-4">
                 <Field label="Premium (₹)" required>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={v.premium}
-                    onChange={(e) => setSlab(i, { premium: e.target.value })}
-                  />
+                  <Input type="number" min="0" value={v.premium} onChange={(e) => onSlabPremiumChange(i, e.target.value)} />
                 </Field>
                 <Field label="GST %">
                   <Input
                     type="number"
                     min="0"
                     max="100"
+                    step="0.01"
                     value={v.gstPercent}
-                    onChange={(e) => setSlab(i, { gstPercent: e.target.value })}
+                    onChange={(e) => onSlabGstPercentChange(i, e.target.value)}
                   />
                 </Field>
-                <div className="col-span-2 flex flex-col justify-center">
-                  <Label>Premium with GST</Label>
-                  <p className="text-lg font-bold text-brand-ink">{inr(gstOf(v.premium, v.gstPercent), { decimals: true })}</p>
-                </div>
+                <Field label="GST amount (₹)" hint="or type this instead of GST %">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={v.gstAmount}
+                    onChange={(e) => onSlabGstAmountChange(i, e.target.value)}
+                  />
+                </Field>
+                <Field label="Premium with GST (₹)" hint="or type this instead">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={v.premiumWithGst}
+                    onChange={(e) => onSlabPremiumWithGstChange(i, e.target.value)}
+                  />
+                </Field>
               </div>
 
               {/* Per-slab benefits */}
@@ -775,12 +896,20 @@ export default function PlanBuilder() {
                     <Input value={a.name} onChange={(e) => setAddon(i, { name: e.target.value })} placeholder="Dental Care" />
                   </Field>
                 </div>
+                <div className="md:col-span-2">
+                  <Field label="Description">
+                    <Input value={a.description} onChange={(e) => setAddon(i, { description: e.target.value })} />
+                  </Field>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-4 rounded-lg bg-brand-bg p-4 md:grid-cols-4">
                 <Field label="Additional premium (₹)">
                   <Input
                     type="number"
                     min="0"
                     value={a.additionalPremium}
-                    onChange={(e) => setAddon(i, { additionalPremium: e.target.value })}
+                    onChange={(e) => onAddonPremiumChange(i, e.target.value)}
                   />
                 </Field>
                 <Field label="GST %">
@@ -788,19 +917,28 @@ export default function PlanBuilder() {
                     type="number"
                     min="0"
                     max="100"
+                    step="0.01"
                     value={a.gstPercent}
-                    onChange={(e) => setAddon(i, { gstPercent: e.target.value })}
+                    onChange={(e) => onAddonGstPercentChange(i, e.target.value)}
                   />
                 </Field>
-                <div className="md:col-span-4">
-                  <Field label="Description">
-                    <Input value={a.description} onChange={(e) => setAddon(i, { description: e.target.value })} />
-                  </Field>
-                </div>
+                <Field label="GST amount (₹)" hint="or type this instead of GST %">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={a.gstAmount}
+                    onChange={(e) => onAddonGstAmountChange(i, e.target.value)}
+                  />
+                </Field>
+                <Field label="Premium with GST (₹)" hint="or type this instead">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={a.premiumWithGst}
+                    onChange={(e) => onAddonPremiumWithGstChange(i, e.target.value)}
+                  />
+                </Field>
               </div>
-              <p className="mt-3 text-xs text-brand-slate">
-                Premium with GST: <strong className="text-brand-ink">{inr(gstOf(a.additionalPremium, a.gstPercent), { decimals: true })}</strong>
-              </p>
             </div>
           ))}
           <Button variant="secondary" onClick={() => set('addons', [...form.addons, blankAddon(catalog.defaultGstPercent)])}>
