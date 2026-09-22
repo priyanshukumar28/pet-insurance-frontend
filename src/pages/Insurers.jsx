@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Building2, Plus, Pencil, Trash2, Star, ExternalLink } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Building2, Plus, Pencil, Trash2, Star, ExternalLink, Dog, Cat } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../api/axios.js';
 import EmptyState from '../components/UI/EmptyState.jsx';
@@ -17,7 +18,14 @@ const BLANK = {
   isFeatured: false,
   displayOrder: 0,
   pdfTemplateId: '',
+  // Pets the insurer sells to. Both = no restriction; one = dogs-only / cats-only.
+  petTypes: ['Dog', 'Cat'],
 };
+
+const PET_TYPE_OPTIONS = [
+  { value: 'Dog', label: 'Dogs', Icon: Dog },
+  { value: 'Cat', label: 'Cats', Icon: Cat },
+];
 
 export default function Insurers() {
   const [items, setItems] = useState(null);
@@ -54,8 +62,21 @@ export default function Insurers() {
         isFeatured: insurer.isFeatured,
         displayOrder: insurer.displayOrder ?? 0,
         pdfTemplateId: insurer.pdfTemplate?.id || '',
+        petTypes: insurer.petTypes?.length ? insurer.petTypes : ['Dog', 'Cat'],
       },
+      planCount: insurer.planCount ?? 0,
     });
+  }
+
+  // Tick / untick a pet type. At least one must stay ticked — an insurer that
+  // sells to neither couldn't sell at all.
+  function togglePetType(type) {
+    const cur = modal.form.petTypes;
+    if (cur.includes(type)) {
+      if (cur.length === 1) return toast.error('An insurer must sell to at least one pet type');
+      return setField('petTypes', cur.filter((t) => t !== type));
+    }
+    return setField('petTypes', ['Dog', 'Cat'].filter((t) => t === type || cur.includes(t)));
   }
 
   function setField(key, value) {
@@ -128,6 +149,8 @@ export default function Insurers() {
               <tr className="border-b border-brand-line bg-brand-bg text-left text-xs font-semibold uppercase tracking-wide text-brand-slate">
                 <th className="px-5 py-3">Insurer</th>
                 <th className="px-5 py-3">Plans</th>
+                <th className="px-5 py-3">Pets sold to</th>
+                <th className="px-5 py-3">Breeds</th>
                 <th className="px-5 py-3">Order</th>
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3 text-right">Actions</th>
@@ -153,6 +176,26 @@ export default function Insurers() {
                     )}
                   </td>
                   <td className="px-5 py-3.5 text-brand-slate">{it.planCount ?? 0}</td>
+                  <td className="px-5 py-3.5">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        (it.petTypes || []).length === 1
+                          ? 'bg-brand-orangeTint text-brand-orangeDark'
+                          : 'bg-brand-blueTint text-brand-blue'
+                      }`}
+                    >
+                      {it.petTypesText || 'Dogs & cats'}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <Link
+                      to={`/insurers/${it.id}/breeds`}
+                      className="inline-flex items-center gap-1.5 text-brand-blue hover:underline"
+                    >
+                      <Dog size={14} />
+                      {it.breedCount ?? 0} mapped
+                    </Link>
+                  </td>
                   <td className="px-5 py-3.5 text-brand-slate">{it.displayOrder}</td>
                   <td className="px-5 py-3.5">
                     <span
@@ -233,6 +276,43 @@ export default function Insurers() {
                 onChange={(e) => setField('logoUrl', e.target.value)}
               />
             </Field>
+            <div className="col-span-2">
+              <Field
+                label="Pets this insurer sells to"
+                required
+                hint="tick both for dogs and cats, or just one for a dogs-only / cats-only insurer"
+              >
+                <div className="flex gap-3">
+                  {PET_TYPE_OPTIONS.map(({ value, label, Icon }) => {
+                    const on = modal.form.petTypes.includes(value);
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => togglePetType(value)}
+                        className={`flex flex-1 items-center gap-2 rounded-lg border-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+                          on
+                            ? 'border-brand-blue bg-brand-blueTint text-brand-blue'
+                            : 'border-brand-line bg-white text-brand-slate hover:border-brand-blueTint'
+                        }`}
+                      >
+                        <input type="checkbox" readOnly checked={on} className="pointer-events-none" tabIndex={-1} />
+                        <Icon size={16} /> {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
+              {modal.form.petTypes.length === 1 && (
+                <p className="mt-2 rounded-lg bg-brand-orangeTint px-3 py-2 text-xs text-brand-orangeDark">
+                  {modal.form.petTypes[0]}s only — none of this insurer&apos;s plans will be offered (or sold) for{' '}
+                  {modal.form.petTypes[0] === 'Dog' ? 'cats' : 'dogs'}.
+                  {modal.mode === 'edit' && modal.planCount > 0
+                    ? ` This affects its ${modal.planCount} existing plan${modal.planCount === 1 ? '' : 's'}.`
+                    : ''}
+                </p>
+              )}
+            </div>
             <div className="col-span-2">
               <Field label="Default certificate PDF template" hint="used by this insurer's plans unless a plan overrides it">
                 <Select

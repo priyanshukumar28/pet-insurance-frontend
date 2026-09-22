@@ -5,6 +5,7 @@ import {
   ShieldCheck,
   LifeBuoy,
   Building2,
+  Dog,
   PawPrint,
   BarChart3,
   ChevronDown,
@@ -14,6 +15,7 @@ import {
   ClipboardList,
   KeyRound,
   Users2,
+  BellRing,
 } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -28,7 +30,9 @@ const navItems = [
   { to: '/pdf-templates', label: 'Policy PDFs', icon: FileText },
   { to: '/website-content', label: 'Legal Documents', icon: Globe },
   { to: '/servicing', label: 'Policy Servicing', icon: LifeBuoy },
+  { to: '/notifications', label: 'Notifications', icon: BellRing },
   { to: '/insurers', label: 'Insurers', icon: Building2 },
+  { to: '/breeds', label: 'Breeds', icon: Dog },
   { to: '/users', label: 'Users', icon: Users2, adminOnly: true },
   { to: '/api-clients', label: 'API Clients', icon: KeyRound, adminOnly: true },
 ];

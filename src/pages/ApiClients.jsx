@@ -107,6 +107,16 @@ export default function ApiClients() {
     }
   }
 
+  async function toggleMessages(c) {
+    try {
+      await api.patch(`/api-clients/${c.id}`, { notifyCustomers: !c.notifyCustomers });
+      toast.success(c.notifyCustomers ? 'Customer messages turned off for this partner' : 'Customer messages turned on for this partner');
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update');
+    }
+  }
+
   async function remove(c) {
     if (!window.confirm(`Delete "${c.name}"?`)) return;
     try {
@@ -153,6 +163,7 @@ export default function ApiClients() {
                 <th className="px-4 py-3">Scopes</th>
                 <th className="px-4 py-3">Proposals</th>
                 <th className="px-4 py-3">Last used</th>
+                <th className="px-4 py-3">Customer messages</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -167,6 +178,12 @@ export default function ApiClients() {
                   <td className="px-4 py-3 text-xs text-brand-slate">{(c.scopes || []).join(', ') || '—'}</td>
                   <td className="px-4 py-3 text-brand-slate">{c.proposalCount ?? 0}</td>
                   <td className="px-4 py-3 text-brand-slate">{fmtDateTime(c.lastUsedAt)}</td>
+                  <td className="px-4 py-3">
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-brand-slate" title="Email / WhatsApp to customers of proposals this partner creates">
+                      <input type="checkbox" checked={c.notifyCustomers !== false} onChange={() => toggleMessages(c)} />
+                      {c.notifyCustomers !== false ? 'On' : 'Off'}
+                    </label>
+                  </td>
                   <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${

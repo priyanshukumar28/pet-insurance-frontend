@@ -10,6 +10,11 @@ import { inr } from '../lib/format.js';
 import { fetchFile } from '../lib/download.js';
 import EndorseModal from '../components/sales/EndorseModal.jsx';
 import CancelModal from '../components/sales/CancelModal.jsx';
+import PetPhotoCell from '../components/UI/PetPhotoCell.jsx';
+import DateRangePicker from '../components/UI/DateRangePicker.jsx';
+import { PRESETS, ALL_TIME_PRESET } from '../lib/dateRanges.js';
+
+const DATE_PRESETS = [ALL_TIME_PRESET, ...PRESETS];
 
 const STATUSES = ['DRAFT', 'CONFIRMED', 'CANCELLED'];
 const STATUS_STYLES = {
@@ -23,6 +28,7 @@ export default function Sales() {
   const [sales, setSales] = useState(null);
   const [meta, setMeta] = useState({ total: 0, confirmedPremium: 0 });
   const [filters, setFilters] = useState({ status: '', search: '' });
+  const [range, setRange] = useState({ from: '', to: '', presetKey: 'all' });
   const [endorsableFields, setEndorsableFields] = useState([]);
   const [endorseFor, setEndorseFor] = useState(null);
   const [cancelFor, setCancelFor] = useState(null);
@@ -31,6 +37,8 @@ export default function Sales() {
     const params = {};
     if (filters.status) params.status = filters.status;
     if (filters.search) params.search = filters.search;
+    if (range.from) params.from = range.from;
+    if (range.to) params.to = range.to;
     api
       .get('/sales', { params })
       .then(({ data }) => {
@@ -38,7 +46,7 @@ export default function Sales() {
         setMeta({ total: data.data.total, confirmedPremium: data.data.confirmedPremium });
       })
       .catch(() => setSales([]));
-  }, [filters]);
+  }, [filters, range.from, range.to]);
 
   useEffect(() => {
     api.get('/sales/catalog').then(({ data }) => setEndorsableFields(data.data.endorsableFields || [])).catch(() => {});
@@ -102,6 +110,7 @@ export default function Sales() {
             value={filters.search}
             onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
           />
+          <DateRangePicker value={range} onChange={setRange} presets={DATE_PRESETS} />
         </div>
         <Button onClick={() => navigate('/sales/new')}>
           <Plus size={16} />
@@ -135,11 +144,14 @@ export default function Sales() {
             </span>
           </div>
           <div className="overflow-x-auto rounded-xl2 border border-brand-line bg-white shadow-card">
-            <table className="w-full min-w-[900px] text-sm">
+            <table className="w-full min-w-[1140px] text-sm">
               <thead>
                 <tr className="border-b border-brand-line bg-brand-bg text-left text-xs font-semibold uppercase tracking-wide text-brand-slate">
                   <th className="px-4 py-3">Reference</th>
                   <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Front</th>
+                  <th className="px-4 py-3">Left</th>
+                  <th className="px-4 py-3">Right</th>
                   <th className="px-4 py-3">Plan / Slab</th>
                   <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Status</th>
@@ -167,6 +179,15 @@ export default function Sales() {
                     <td className="px-4 py-3">
                       <div className="text-brand-ink">{s.customerName}</div>
                       <div className="text-xs text-brand-slate">{s.petName || '—'}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <PetPhotoCell photos={s.photos} kind="FRONT" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <PetPhotoCell photos={s.photos} kind="LEFT" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <PetPhotoCell photos={s.photos} kind="RIGHT" />
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-brand-ink">{s.planName}</div>

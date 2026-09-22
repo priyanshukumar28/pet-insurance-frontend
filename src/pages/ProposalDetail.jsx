@@ -2,17 +2,17 @@ import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, FileSignature, Pencil, Ban, Trash2, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
-import api, { BASE_URL } from '../api/axios.js';
+import api from '../api/axios.js';
 import Modal from '../components/UI/Modal.jsx';
 import Button from '../components/UI/Button.jsx';
 import { Field, Input, Select, Textarea } from '../components/UI/Field.jsx';
 import { inr } from '../lib/format.js';
+import { assetUrl, PET_PHOTO_KIND_LABEL as KIND_LABEL } from '../lib/assets.js';
 import { PROPOSAL_STATUS_STYLES } from './Proposals.jsx';
+import MessagesPanel from '../components/notifications/MessagesPanel.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 
 const SOURCE_LABELS = { PARTNER_API: 'Partner API', WEBSITE: 'Website', ADMIN: 'Admin' };
-const ASSET_BASE = BASE_URL.replace(/\/api\/?$/, '');
-const assetUrl = (u) => (u && /^https?:/.test(u) ? u : `${ASSET_BASE}${u || ''}`);
-const KIND_LABEL = { FRONT: 'Front', LEFT: 'Left', RIGHT: 'Right' };
 const COVERAGE_LABELS = {
   FRACTURE: 'Fracture',
   HOSPITALIZATION: 'Hospitalization',
@@ -46,6 +46,7 @@ function Row({ k, v }) {
 export default function ProposalDetail() {
   const { proposalNo } = useParams();
   const navigate = useNavigate();
+  const { admin } = useAuth();
   const [p, setP] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [edit, setEdit] = useState(null);
@@ -146,6 +147,17 @@ export default function ProposalDetail() {
             {p.apiClient ? ` · ${p.apiClient.name}` : ''} · created {fmtDateTime(p.createdAt)}
             {p.status !== 'CONVERTED' && ` · reached step ${p.journeyStep ?? 1} of 4`}
           </p>
+          {p.lockedFields?.length > 0 && (
+            <p className="mt-1 text-xs text-brand-slate">
+              🔒 Locked for the customer (supplied via the partner API):{' '}
+              <strong className="text-brand-ink">
+                {p.lockedFields
+                  .map((f) => ({ petType: 'pet type', petBreed: 'breed', petAgeMonths: 'age', petWeightKg: 'weight' }[f] || f))
+                  .join(', ')}
+              </strong>
+              . You can still correct them here if the partner sent something wrong.
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {canConvert && (
@@ -232,6 +244,7 @@ export default function ProposalDetail() {
             <Row k="Pet sound & healthy" v={yn(p.eligibility?.sound)} />
             <Row k="Vaccinated (3+)" v={yn(p.eligibility?.vacc)} />
             <Row k="Declaration accepted" v={p.declarationAccepted ? 'Yes' : 'No'} />
+            <Row k="OK to message on WhatsApp" v={p.notifyConsent ? 'Yes' : 'No'} />
           </dl>
         </section>
 
@@ -289,6 +302,14 @@ export default function ProposalDetail() {
             <p className="text-sm text-brand-slate">No plan chosen yet.</p>
           )}
         </section>
+
+        <MessagesPanel
+          className="lg:col-span-2"
+          event="PROPOSAL_CREATED"
+          proposalNo={p.proposalNo}
+          proposalId={p.id}
+          canSend={['SUPERADMIN', 'ADMIN'].includes(admin?.role)}
+        />
 
         {p.notes && (
           <section className="rounded-xl2 border border-brand-line bg-white p-5 shadow-card lg:col-span-2">

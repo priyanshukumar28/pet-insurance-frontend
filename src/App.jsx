@@ -17,8 +17,11 @@ import PdfTemplates from './pages/pdf/PdfTemplates.jsx';
 import PdfTemplateEditor from './pages/pdf/PdfTemplateEditor.jsx';
 import WebsiteContent from './pages/WebsiteContent.jsx';
 import Users from './pages/Users.jsx';
+import Notifications from './pages/Notifications.jsx';
 import Servicing from './pages/Servicing.jsx';
 import Insurers from './pages/Insurers.jsx';
+import InsurerBreeds from './pages/InsurerBreeds.jsx';
+import Breeds from './pages/Breeds.jsx';
 import PlansMIS from './pages/mis/PlansMIS.jsx';
 import PartnerOverview from './pages/partner/PartnerOverview.jsx';
 import PartnerProposals from './pages/partner/PartnerProposals.jsx';
@@ -84,6 +87,7 @@ export default function App() {
           <Route path="/proposals" element={<Protected title="Proposals"><Proposals /></Protected>} />
           <Route path="/proposals/:proposalNo" element={<Protected title="Proposal"><ProposalDetail /></Protected>} />
           <Route path="/api-clients" element={<Protected title="API Clients" roles={ADMIN_ROLES}><ApiClients /></Protected>} />
+          <Route path="/notifications" element={<Protected title="Notifications"><Notifications /></Protected>} />
           <Route path="/users" element={<Protected title="Users" roles={ADMIN_ROLES}><Users /></Protected>} />
           <Route path="/servicing" element={<Protected title="Policy Servicing"><Servicing /></Protected>} />
           <Route path="/pdf-templates" element={<Protected title="Policy PDFs"><PdfTemplates /></Protected>} />
@@ -91,6 +95,8 @@ export default function App() {
           <Route path="/pdf-templates/:id" element={<Protected title="Edit Policy PDF"><PdfTemplateEditor /></Protected>} />
           <Route path="/website-content" element={<Protected title="Legal Documents"><WebsiteContent /></Protected>} />
           <Route path="/insurers" element={<Protected title="Insurers"><Insurers /></Protected>} />
+          <Route path="/insurers/:id/breeds" element={<Protected title="Insurer Breeds"><InsurerBreeds /></Protected>} />
+          <Route path="/breeds" element={<Protected title="Breeds"><Breeds /></Protected>} />
           <Route path="/mis/plans" element={<Protected title="MIS · Plans"><PlansMIS /></Protected>} />
           <Route path="/portal/*" element={<Navigate to="/" replace />} />
           <Route path="*" element={<NotFound />} />

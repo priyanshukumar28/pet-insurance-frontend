@@ -47,6 +47,12 @@ export const PRESETS = [
 
 export const DEFAULT_PRESET = 'this-month';
 
+// Not part of the shared PRESETS list — the dashboard's trend/bucket math needs
+// a bounded range, but a plain records list (Proposals, Sales) is happy to show
+// everything until the admin narrows it down. Pages that want it prepend this
+// to the presets they pass into DateRangePicker.
+export const ALL_TIME_PRESET = { key: 'all', label: 'All time', resolve: () => ({ from: '', to: '' }) };
+
 export function resolvePreset(key) {
   const p = PRESETS.find((x) => x.key === key) || PRESETS.find((x) => x.key === DEFAULT_PRESET);
   return { ...p.resolve(), presetKey: p.key };
@@ -58,6 +64,7 @@ function fmtOne(iso) {
   return `${String(d).padStart(2, '0')} ${MON[m - 1]} ${y}`;
 }
 export function fmtRangeLabel(from, to) {
+  if (!from && !to) return 'All time';
   if (!from || !to) return 'Select dates';
   return from === to ? fmtOne(from) : `${fmtOne(from)} – ${fmtOne(to)}`;
 }

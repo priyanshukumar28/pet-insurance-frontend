@@ -10,6 +10,9 @@ import { inr, STATUS_STYLES } from '../lib/format.js';
 
 const STATUSES = ['DRAFT', 'PUBLISHED', 'ARCHIVED'];
 
+// Pet types a plan can be priced separately for (mirrors the backend catalog).
+const PET_PRICED = ['Dog', 'Cat'];
+
 export default function Plans() {
   const navigate = useNavigate();
   const [plans, setPlans] = useState(null);
@@ -177,9 +180,22 @@ export default function Plans() {
                       : `${inr(plan.priceFrom)} – ${inr(plan.priceTo)}`}
                   </strong>
                 </span>
+                {plan.petTypePricing && (
+                  <span className="rounded-full bg-brand-blueTint px-2.5 py-0.5 text-[11px] font-semibold text-brand-blue">
+                    Dog / Cat pricing
+                  </span>
+                )}
                 <span>
                   Entry {plan.entryAgeMin} {plan.entryAgeMinUnit.toLowerCase()} – {plan.entryAgeMax}{' '}
                   {plan.entryAgeMaxUnit.toLowerCase()} · Exit {plan.exitAge} {plan.exitAgeUnit.toLowerCase()}
+                </span>
+                <span>
+                  Weight{' '}
+                  <strong className="text-brand-ink">{plan.weightBandText || 'No limit'}</strong>
+                </span>
+                <span>
+                  Pets{' '}
+                  <strong className="text-brand-ink">{plan.insurer?.petTypesText || 'Dogs & cats'}</strong>
                 </span>
               </div>
 
@@ -190,8 +206,18 @@ export default function Plans() {
                       <tr className="text-left text-brand-slate">
                         <th className="py-1 pr-4 font-medium">Slab</th>
                         <th className="py-1 pr-4 font-medium">Surgery SI</th>
-                        <th className="py-1 pr-4 font-medium">Premium</th>
-                        <th className="py-1 pr-4 font-medium">+ GST</th>
+                        {plan.petTypePricing ? (
+                          PET_PRICED.map((t) => (
+                            <th key={t} className="py-1 pr-4 font-medium">
+                              {t} premium <span className="font-normal">(+ GST)</span>
+                            </th>
+                          ))
+                        ) : (
+                          <>
+                            <th className="py-1 pr-4 font-medium">Premium</th>
+                            <th className="py-1 pr-4 font-medium">+ GST</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -199,8 +225,28 @@ export default function Plans() {
                         <tr key={v.id} className="border-t border-brand-line/70 text-brand-ink">
                           <td className="py-1.5 pr-4">{v.label}</td>
                           <td className="py-1.5 pr-4">{inr(v.surgerySumInsured)}</td>
-                          <td className="py-1.5 pr-4">{inr(v.premium)}</td>
-                          <td className="py-1.5 pr-4">{inr(v.premiumWithGst, { decimals: true })}</td>
+                          {plan.petTypePricing ? (
+                            PET_PRICED.map((t) => {
+                              const e = v.petTypePremiums?.[t];
+                              return (
+                                <td key={t} className="py-1.5 pr-4">
+                                  {e ? (
+                                    <>
+                                      {inr(e.premium)}{' '}
+                                      <span className="text-brand-slate">({inr(e.premiumWithGst, { decimals: true })})</span>
+                                    </>
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                              );
+                            })
+                          ) : (
+                            <>
+                              <td className="py-1.5 pr-4">{inr(v.premium)}</td>
+                              <td className="py-1.5 pr-4">{inr(v.premiumWithGst, { decimals: true })}</td>
+                            </>
+                          )}
                         </tr>
                       ))}
                     </tbody>

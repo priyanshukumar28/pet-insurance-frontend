@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Layers, CalendarClock, Gift, Puzzle, FileText } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Layers, CalendarClock, Gift, Puzzle, FileText, Dog, Cat } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../api/axios.js';
 import Button from '../components/UI/Button.jsx';
@@ -9,7 +9,7 @@ import { fetchFile } from '../lib/download.js';
 
 const TABS = [
   { key: 'coverages', label: 'Coverages', icon: Layers },
-  { key: 'eligibility', label: 'Age & Waiting', icon: CalendarClock },
+  { key: 'eligibility', label: 'Eligibility & Waiting', icon: CalendarClock },
   { key: 'benefits', label: 'Benefits', icon: Gift },
   { key: 'addons', label: 'Add-ons', icon: Puzzle },
 ];
@@ -44,6 +44,70 @@ function fromPremiumWithGst(premium, premiumWithGst, whole) {
   const withGst = roundMoney(premiumWithGst, whole);
   const amt = roundMoney(withGst - p, whole);
   return { gstAmount: amt, gstPercent: p > 0 ? round2((amt / p) * 100) : 0 };
+}
+
+// Apply one edit to a price group {<premiumKey>, gstPercent, gstAmount,
+// premiumWithGst} — same linked-field rules as the single-price inputs: editing
+// any one of GST % / GST amount / Premium-with-GST recomputes the other two.
+function priceEdit(values, premiumKey, field, raw, whole) {
+  const premium = values[premiumKey];
+  if (field === premiumKey) return { [premiumKey]: raw, ...fromGstPercent(raw, values.gstPercent, whole) };
+  if (field === 'gstPercent') return { gstPercent: raw, ...fromGstPercent(premium, raw, whole) };
+  if (field === 'gstAmount') {
+    const { gstPercent, premiumWithGst } = fromGstAmount(premium, raw, whole);
+    return { gstAmount: raw, gstPercent, premiumWithGst };
+  }
+  const { gstAmount, gstPercent } = fromPremiumWithGst(premium, raw, whole);
+  return { premiumWithGst: raw, gstAmount, gstPercent };
+}
+
+// The single-price fields of a slab / add-on, as one price group.
+function singlePrice(item, premiumKey) {
+  return {
+    [premiumKey]: item[premiumKey],
+    gstPercent: item.gstPercent,
+    gstAmount: item.gstAmount,
+    premiumWithGst: item.premiumWithGst,
+  };
+}
+
+// A brand-new slab / add-on starts with a (blank) price group for every pet type.
+function withPetPrices(item, types, premiumKey) {
+  return { ...item, petTypePrices: Object.fromEntries(types.map((t) => [t, singlePrice(item, premiumKey)])) };
+}
+
+// With pet-type pricing on, the slab's single premium fields always mirror its
+// LOWEST pet-type price (the "from" price) — the server does the same on save.
+function lowestOf(petTypePrices, premiumKey) {
+  const filled = Object.values(petTypePrices || {}).filter((e) => e && e[premiumKey] !== '' && e[premiumKey] != null);
+  if (!filled.length) return {};
+  const lo = filled.reduce((a, b) => (Number(b[premiumKey]) < Number(a[premiumKey]) ? b : a));
+  return singlePrice(lo, premiumKey);
+}
+
+// Server { Dog: {premium, gstPercent, premiumWithGst}, … } → editable price
+// groups. A type the server has no entry for starts from the single price.
+function toPetTypePrices(map, types, single, premiumKey, withGstKey) {
+  return Object.fromEntries(
+    types.map((t) => {
+      const e = map && map[t];
+      if (!e) return [t, { ...single }];
+      const premium = e[premiumKey] ?? '';
+      const gstPercent = e.gstPercent ?? single.gstPercent;
+      const premiumWithGst = e[withGstKey] ?? fromGstPercent(premium, gstPercent, false).premiumWithGst;
+      return [t, { [premiumKey]: premium, gstPercent, gstAmount: round2(Number(premiumWithGst) - Number(premium || 0)), premiumWithGst }];
+    })
+  );
+}
+
+// Editable price groups → the API's { Dog: { <premiumKey>, gstPercent }, … }.
+function petTypePricesPayload(prices, types, premiumKey) {
+  return Object.fromEntries(
+    types.map((t) => [
+      t,
+      { [premiumKey]: Number(prices?.[t]?.[premiumKey]) || 0, gstPercent: Number(prices?.[t]?.gstPercent) },
+    ])
+  );
 }
 
 function blankSlab(gst, secondaryKeys, benefits = []) {
@@ -108,6 +172,16 @@ export default function PlanBuilder() {
     [catalog]
   );
 
+  // Pet types a plan can be priced separately for (Dog / Cat).
+  const petTypes = catalog?.petTypePricingTypes || ['Dog', 'Cat'];
+
+  // The chosen insurer may sell to dogs only or cats only. A separate Dog / Cat
+  // price only makes sense when it sells to both (the server enforces this too).
+  const insurer = insurers.find((i) => i.id === form?.insurerId) || null;
+  const insurerPets = insurer?.petTypes?.length ? insurer.petTypes : petTypes;
+  const canPriceByPetType = petTypes.every((t) => insurerPets.includes(t));
+  const singlePetLabel = insurer && !canPriceByPetType ? `${insurer.petTypesText || `${insurerPets[0]}s only`}` : '';
+
   useEffect(() => {
     Promise.all([api.get('/plans/catalog'), api.get('/insurers'), api.get('/pdf-templates')])
       .then(([cat, ins, tpl]) => {
@@ -119,6 +193,7 @@ export default function PlanBuilder() {
       .then(async (cat) => {
         const gst = cat.defaultGstPercent;
         const skeys = cat.coverageFields.filter((c) => !c.primary).map((c) => c.key);
+        const petTypes = cat.petTypePricingTypes || ['Dog', 'Cat'];
         if (isEdit) {
           const { data } = await api.get(`/plans/${id}`);
           const p = data.data.plan;
@@ -134,6 +209,7 @@ export default function PlanBuilder() {
             isFeatured: !!p.isFeatured,
             badgeLabel: p.badgeLabel || '',
             coverTermMonths: p.coverTermMonths ?? cat.coverTermDefault ?? 12,
+            petTypePricing: !!p.petTypePricing,
             saleableFrom: p.saleableFrom ? p.saleableFrom.slice(0, 10) : '',
             saleableUntil: p.saleableUntil ? p.saleableUntil.slice(0, 10) : '',
             entryAgeMin: p.entryAgeMin,
@@ -142,6 +218,8 @@ export default function PlanBuilder() {
             entryAgeMaxUnit: p.entryAgeMaxUnit,
             exitAge: p.exitAge,
             exitAgeUnit: p.exitAgeUnit,
+            weightMinKg: p.weightMinKg ?? '',
+            weightMaxKg: p.weightMaxKg ?? '',
             waitingPeriods: p.waitingPeriods.length ? p.waitingPeriods : cat.defaultWaitingPeriods,
             commonBenefits: planBenefits,
             variants: p.variants.map((v) => {
@@ -151,14 +229,22 @@ export default function PlanBuilder() {
               // persisted) over recomputing it, so an edit doesn't drift the
               // displayed value from what's actually saved.
               const premiumWithGst = v.premiumWithGst ?? fromGstPercent(premium, gstPercent, false).premiumWithGst;
+              const gstAmount = round2(Number(premiumWithGst) - Number(premium || 0));
               return {
                 id: v.id,
                 label: v.label,
                 surgerySumInsured: v.surgerySumInsured ?? '',
                 premium,
                 gstPercent,
-                gstAmount: round2(Number(premiumWithGst) - Number(premium || 0)),
+                gstAmount,
                 premiumWithGst,
+                petTypePrices: toPetTypePrices(
+                  v.petTypePremiums,
+                  petTypes,
+                  { premium, gstPercent, gstAmount, premiumWithGst },
+                  'premium',
+                  'premiumWithGst'
+                ),
                 coverages: Object.fromEntries(skeys.map((k) => [k, v.coverages?.[k] ?? ''])),
                 isRecommended: !!v.isRecommended,
                 benefits:
@@ -171,13 +257,21 @@ export default function PlanBuilder() {
               const gstPercent = a.gstPercent ?? gst;
               const premiumWithGst =
                 a.additionalPremiumWithGst ?? fromGstPercent(additionalPremium, gstPercent, false).premiumWithGst;
+              const gstAmount = round2(Number(premiumWithGst) - Number(additionalPremium || 0));
               return {
                 name: a.name,
                 description: a.description || '',
                 additionalPremium,
                 gstPercent,
-                gstAmount: round2(Number(premiumWithGst) - Number(additionalPremium || 0)),
+                gstAmount,
                 premiumWithGst,
+                petTypePrices: toPetTypePrices(
+                  a.petTypePremiums,
+                  petTypes,
+                  { additionalPremium, gstPercent, gstAmount, premiumWithGst },
+                  'additionalPremium',
+                  'additionalPremiumWithGst'
+                ),
                 coverageEffects: a.coverageEffects || {},
               };
             }),
@@ -194,6 +288,7 @@ export default function PlanBuilder() {
             isFeatured: false,
             badgeLabel: '',
             coverTermMonths: cat.coverTermDefault ?? 12,
+            petTypePricing: false,
             saleableFrom: '',
             saleableUntil: '',
             entryAgeMin: 3,
@@ -202,6 +297,8 @@ export default function PlanBuilder() {
             entryAgeMaxUnit: 'YEAR',
             exitAge: 12,
             exitAgeUnit: 'YEAR',
+            weightMinKg: '',
+            weightMaxKg: '',
             waitingPeriods: cat.defaultWaitingPeriods.map((w) => ({ ...w })),
             commonBenefits: cat.defaultCommonBenefits.map((b) => ({ ...b })),
             variants: [blankSlab(gst, skeys, cat.defaultCommonBenefits)],
@@ -233,6 +330,58 @@ export default function PlanBuilder() {
   function onSlabPremiumWithGstChange(i, value) {
     const { gstAmount, gstPercent } = fromPremiumWithGst(form.variants[i].premium, value, roundToRupee);
     setSlab(i, { premiumWithGst: value, gstAmount, gstPercent });
+  }
+  // --- pet-type pricing ---------------------------------------------------
+  // Turning it ON seeds each slab / add-on's Dog and Cat price from the single
+  // price already entered, so an admin only edits what actually differs.
+  function togglePetTypePricing(on) {
+    if (!on) {
+      const differs = (list, key) =>
+        list.some((it) => {
+          const prices = petTypes.map((t) => Number(it.petTypePrices?.[t]?.[key]));
+          return prices.some((n) => n !== prices[0]);
+        });
+      const hasDifferent = differs(form.variants, 'premium') || differs(form.addons, 'additionalPremium');
+      if (
+        hasDifferent &&
+        !window.confirm(
+          'Turn off pet-type pricing? Every slab and add-on will keep only its lower price, and the Dog / Cat prices will be discarded when you save.'
+        )
+      ) {
+        return;
+      }
+    }
+    setForm((f) => {
+      const seed = (item, premiumKey) => {
+        const prices = { ...(item.petTypePrices || {}) };
+        petTypes.forEach((t) => {
+          if (!prices[t]) prices[t] = singlePrice(item, premiumKey);
+        });
+        return { ...item, petTypePrices: prices };
+      };
+      return {
+        ...f,
+        petTypePricing: on,
+        variants: on ? f.variants.map((v) => seed(v, 'premium')) : f.variants,
+        addons: on ? f.addons.map((a) => seed(a, 'additionalPremium')) : f.addons,
+      };
+    });
+  }
+  // One edit inside a Dog / Cat price panel (slab or add-on). Also re-syncs the
+  // item's single "from" price to the lowest of its pet-type prices.
+  function setPetTypePrice(listKey, i, premiumKey, type, field, raw) {
+    setForm((f) => ({
+      ...f,
+      [listKey]: f[listKey].map((item, idx) => {
+        if (idx !== i) return item;
+        const cur = item.petTypePrices?.[type] || singlePrice(item, premiumKey);
+        const petTypePrices = {
+          ...item.petTypePrices,
+          [type]: { ...cur, ...priceEdit(cur, premiumKey, field, raw, roundToRupee) },
+        };
+        return { ...item, petTypePrices, ...lowestOf(petTypePrices, premiumKey) };
+      }),
+    }));
   }
   function setSlabCoverage(i, key, value) {
     setForm((f) => ({
@@ -292,13 +441,22 @@ export default function PlanBuilder() {
   // present), matching the default derivation used everywhere else.
   useEffect(() => {
     if (!form) return;
+    const rederive = (item, premiumKey) => {
+      const next = { ...item, ...fromGstPercent(item[premiumKey], item.gstPercent, roundToRupee) };
+      if (item.petTypePrices) {
+        next.petTypePrices = Object.fromEntries(
+          Object.entries(item.petTypePrices).map(([t, e]) => [
+            t,
+            { ...e, ...fromGstPercent(e[premiumKey], e.gstPercent, roundToRupee) },
+          ])
+        );
+      }
+      return next;
+    };
     setForm((f) => ({
       ...f,
-      variants: f.variants.map((v) => ({ ...v, ...fromGstPercent(v.premium, v.gstPercent, roundToRupee) })),
-      addons: f.addons.map((a) => ({
-        ...a,
-        ...fromGstPercent(a.additionalPremium, a.gstPercent, roundToRupee),
-      })),
+      variants: f.variants.map((v) => rederive(v, 'premium')),
+      addons: f.addons.map((a) => rederive(a, 'additionalPremium')),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roundToRupee]);
@@ -306,20 +464,39 @@ export default function PlanBuilder() {
   function validate() {
     if (!form.insurerId) return 'Pick an insurer';
     if (!form.name.trim()) return 'Plan name is required';
+    if (form.petTypePricing && !canPriceByPetType)
+      return `${insurer.shortName || insurer.name} sells to ${singlePetLabel.toLowerCase()}, so a separate price per pet type doesn't apply — turn "Price differs by pet type" off`;
     if (form.coverTermMonths && (Number(form.coverTermMonths) < 1 || Number(form.coverTermMonths) > 12))
       return 'Cover term must be between 1 and 12 months';
     if (form.saleableFrom && form.saleableUntil && form.saleableUntil < form.saleableFrom)
       return '"Saleable until" cannot be before "saleable from"';
     if ([form.entryAgeMin, form.entryAgeMax, form.exitAge].some((n) => n === '' || n === null))
-      return 'Entry and exit ages are required (Age & Waiting tab)';
+      return 'Entry and exit ages are required (Eligibility & Waiting tab)';
+    if (
+      form.weightMinKg !== '' &&
+      form.weightMaxKg !== '' &&
+      Number(form.weightMaxKg) < Number(form.weightMinKg)
+    )
+      return '"Maximum weight" cannot be below "minimum weight" (Eligibility & Waiting tab)';
     if (!form.variants.length) return 'Add at least one premium slab';
     for (const [i, v] of form.variants.entries()) {
       if (!v.surgerySumInsured || Number(v.surgerySumInsured) <= 0)
         return `Slab ${i + 1}: Surgery Sum Insured is mandatory and must be > 0`;
-      if (v.premium === '' || Number(v.premium) < 0) return `Slab ${i + 1}: premium is required`;
+      if (form.petTypePricing) {
+        for (const t of petTypes) {
+          const x = v.petTypePrices?.[t]?.premium;
+          if (x === '' || x == null || Number(x) < 0) return `Slab ${i + 1}: enter the ${t} premium`;
+        }
+      } else if (v.premium === '' || Number(v.premium) < 0) return `Slab ${i + 1}: premium is required`;
     }
     for (const [i, a] of form.addons.entries()) {
       if (!a.name.trim()) return `Add-on ${i + 1}: name is required`;
+      if (form.petTypePricing) {
+        for (const t of petTypes) {
+          const x = a.petTypePrices?.[t]?.additionalPremium;
+          if (x === '' || x == null || Number(x) < 0) return `Add-on "${a.name.trim()}": enter the ${t} premium`;
+        }
+      }
     }
     return null;
   }
@@ -340,6 +517,8 @@ export default function PlanBuilder() {
         entryAgeMin: Number(form.entryAgeMin),
         entryAgeMax: Number(form.entryAgeMax),
         exitAge: Number(form.exitAge),
+        weightMinKg: form.weightMinKg === '' ? null : Number(form.weightMinKg),
+        weightMaxKg: form.weightMaxKg === '' ? null : Number(form.weightMaxKg),
         waitingPeriods: form.waitingPeriods
           .filter((w) => w.condition.trim())
           .map((w) => ({ condition: w.condition.trim(), days: Number(w.days) || 0 })),
@@ -351,6 +530,7 @@ export default function PlanBuilder() {
           surgerySumInsured: Number(v.surgerySumInsured),
           premium: Number(v.premium),
           gstPercent: Number(v.gstPercent),
+          petTypePremiums: form.petTypePricing ? petTypePricesPayload(v.petTypePrices, petTypes, 'premium') : undefined,
           displayOrder: i,
           isRecommended: !!v.isRecommended,
           coverages: Object.fromEntries(
@@ -370,6 +550,9 @@ export default function PlanBuilder() {
             description: a.description,
             additionalPremium: Number(a.additionalPremium) || 0,
             gstPercent: Number(a.gstPercent),
+            petTypePremiums: form.petTypePricing
+              ? petTypePricesPayload(a.petTypePrices, petTypes, 'additionalPremium')
+              : undefined,
             displayOrder: i,
             coverageEffects: Object.fromEntries(
               Object.entries(a.coverageEffects || {})
@@ -421,6 +604,7 @@ export default function PlanBuilder() {
             {insurers.map((i) => (
               <option key={i.id} value={i.id}>
                 {i.shortName || i.name}
+                {(i.petTypes || []).length === 1 ? ` (${i.petTypesText})` : ''}
               </option>
             ))}
           </Select>
@@ -551,6 +735,15 @@ export default function PlanBuilder() {
       </div>
 
       {(tab === 'coverages' || tab === 'addons') && (
+        <PetTypePricingToggle
+          on={form.petTypePricing}
+          types={petTypes}
+          onChange={togglePetTypePricing}
+          blockedBy={canPriceByPetType ? '' : `${insurer.shortName || insurer.name} sells to ${singlePetLabel.toLowerCase()}`}
+        />
+      )}
+
+      {(tab === 'coverages' || tab === 'addons') && (
         <label className="flex w-fit items-center gap-2 text-sm text-brand-slate">
           <input
             type="checkbox"
@@ -630,37 +823,47 @@ export default function PlanBuilder() {
                 ))}
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-4 rounded-lg bg-brand-bg p-4 md:grid-cols-4">
-                <Field label="Premium (₹)" required>
-                  <Input type="number" min="0" value={v.premium} onChange={(e) => onSlabPremiumChange(i, e.target.value)} />
-                </Field>
-                <Field label="GST %">
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={v.gstPercent}
-                    onChange={(e) => onSlabGstPercentChange(i, e.target.value)}
-                  />
-                </Field>
-                <Field label="GST amount (₹)" hint="or type this instead of GST %">
-                  <Input
-                    type="number"
-                    min="0"
-                    value={v.gstAmount}
-                    onChange={(e) => onSlabGstAmountChange(i, e.target.value)}
-                  />
-                </Field>
-                <Field label="Premium with GST (₹)" hint="or type this instead">
-                  <Input
-                    type="number"
-                    min="0"
-                    value={v.premiumWithGst}
-                    onChange={(e) => onSlabPremiumWithGstChange(i, e.target.value)}
-                  />
-                </Field>
-              </div>
+              {form.petTypePricing ? (
+                <PetTypePrices
+                  types={petTypes}
+                  prices={v.petTypePrices}
+                  premiumKey="premium"
+                  premiumLabel="Premium (₹)"
+                  onChange={(type, field, raw) => setPetTypePrice('variants', i, 'premium', type, field, raw)}
+                />
+              ) : (
+                <div className="mt-4 grid grid-cols-2 gap-4 rounded-lg bg-brand-bg p-4 md:grid-cols-4">
+                  <Field label="Premium (₹)" required>
+                    <Input type="number" min="0" value={v.premium} onChange={(e) => onSlabPremiumChange(i, e.target.value)} />
+                  </Field>
+                  <Field label="GST %">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={v.gstPercent}
+                      onChange={(e) => onSlabGstPercentChange(i, e.target.value)}
+                    />
+                  </Field>
+                  <Field label="GST amount (₹)" hint="or type this instead of GST %">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={v.gstAmount}
+                      onChange={(e) => onSlabGstAmountChange(i, e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Premium with GST (₹)" hint="or type this instead">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={v.premiumWithGst}
+                      onChange={(e) => onSlabPremiumWithGstChange(i, e.target.value)}
+                    />
+                  </Field>
+                </div>
+              )}
 
               {/* Per-slab benefits */}
               <div className="mt-4">
@@ -693,7 +896,10 @@ export default function PlanBuilder() {
           <Button
             variant="secondary"
             onClick={() =>
-              set('variants', [...form.variants, blankSlab(catalog.defaultGstPercent, secondaryKeys, form.commonBenefits)])
+              set('variants', [
+                ...form.variants,
+                withPetPrices(blankSlab(catalog.defaultGstPercent, secondaryKeys, form.commonBenefits), petTypes, 'premium'),
+              ])
             }
           >
             <Plus size={15} /> Add slab
@@ -705,7 +911,11 @@ export default function PlanBuilder() {
       {tab === 'eligibility' && (
         <div className="space-y-5">
           <div className="rounded-xl2 border border-brand-line bg-white p-5 shadow-card">
-            <h4 className="mb-4 text-sm font-semibold text-brand-ink">Age eligibility</h4>
+            <h4 className="mb-1 text-sm font-semibold text-brand-ink">Age eligibility</h4>
+            <p className="mb-4 text-xs text-brand-slate">
+              A pet is offered this plan only when its age is within the entry band (both ends included). Customers
+              never see plans their pet doesn&apos;t qualify for.
+            </p>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
               <AgePair
                 label="Entry age — minimum"
@@ -734,6 +944,36 @@ export default function PlanBuilder() {
                 onValue={(x) => set('exitAge', x)}
                 onUnit={(x) => set('exitAgeUnit', x)}
               />
+            </div>
+          </div>
+
+          <div className="rounded-xl2 border border-brand-line bg-white p-5 shadow-card">
+            <h4 className="mb-1 text-sm font-semibold text-brand-ink">Weight eligibility</h4>
+            <p className="mb-4 text-xs text-brand-slate">
+              For insurers that restrict by pet weight. Leave both blank for no weight limit; fill only one to set just
+              a minimum or just a maximum. Both ends are included.
+            </p>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+              <Field label="Minimum weight (kg)" hint="blank = no minimum">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={form.weightMinKg}
+                  onChange={(e) => set('weightMinKg', e.target.value)}
+                  placeholder="e.g. 2"
+                />
+              </Field>
+              <Field label="Maximum weight (kg)" hint="blank = no maximum">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={form.weightMaxKg}
+                  onChange={(e) => set('weightMaxKg', e.target.value)}
+                  placeholder="e.g. 25"
+                />
+              </Field>
             </div>
           </div>
 
@@ -903,45 +1143,55 @@ export default function PlanBuilder() {
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-4 rounded-lg bg-brand-bg p-4 md:grid-cols-4">
-                <Field label="Additional premium (₹)">
-                  <Input
-                    type="number"
-                    min="0"
-                    value={a.additionalPremium}
-                    onChange={(e) => onAddonPremiumChange(i, e.target.value)}
-                  />
-                </Field>
-                <Field label="GST %">
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={a.gstPercent}
-                    onChange={(e) => onAddonGstPercentChange(i, e.target.value)}
-                  />
-                </Field>
-                <Field label="GST amount (₹)" hint="or type this instead of GST %">
-                  <Input
-                    type="number"
-                    min="0"
-                    value={a.gstAmount}
-                    onChange={(e) => onAddonGstAmountChange(i, e.target.value)}
-                  />
-                </Field>
-                <Field label="Premium with GST (₹)" hint="or type this instead">
-                  <Input
-                    type="number"
-                    min="0"
-                    value={a.premiumWithGst}
-                    onChange={(e) => onAddonPremiumWithGstChange(i, e.target.value)}
-                  />
-                </Field>
-              </div>
+              {form.petTypePricing ? (
+                <PetTypePrices
+                  types={petTypes}
+                  prices={a.petTypePrices}
+                  premiumKey="additionalPremium"
+                  premiumLabel="Additional premium (₹)"
+                  onChange={(type, field, raw) => setPetTypePrice('addons', i, 'additionalPremium', type, field, raw)}
+                />
+              ) : (
+                <div className="mt-4 grid grid-cols-2 gap-4 rounded-lg bg-brand-bg p-4 md:grid-cols-4">
+                  <Field label="Additional premium (₹)">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={a.additionalPremium}
+                      onChange={(e) => onAddonPremiumChange(i, e.target.value)}
+                    />
+                  </Field>
+                  <Field label="GST %">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={a.gstPercent}
+                      onChange={(e) => onAddonGstPercentChange(i, e.target.value)}
+                    />
+                  </Field>
+                  <Field label="GST amount (₹)" hint="or type this instead of GST %">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={a.gstAmount}
+                      onChange={(e) => onAddonGstAmountChange(i, e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Premium with GST (₹)" hint="or type this instead">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={a.premiumWithGst}
+                      onChange={(e) => onAddonPremiumWithGstChange(i, e.target.value)}
+                    />
+                  </Field>
+                </div>
+              )}
             </div>
           ))}
-          <Button variant="secondary" onClick={() => set('addons', [...form.addons, blankAddon(catalog.defaultGstPercent)])}>
+          <Button variant="secondary" onClick={() => set('addons', [...form.addons, withPetPrices(blankAddon(catalog.defaultGstPercent), petTypes, 'additionalPremium')])}>
             <Plus size={15} /> Add add-on
           </Button>
         </div>
@@ -955,6 +1205,97 @@ export default function PlanBuilder() {
         <Button onClick={save} disabled={saving}>
           {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create plan'}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+// Plan-level switch: one price for every pet, or a Dog price and a Cat price.
+function PetTypePricingToggle({ on, types, onChange, blockedBy = '' }) {
+  const list = types.join(' / ');
+  // The insurer sells to one species only: a separate Dog / Cat price is meaningless.
+  // It can still be switched OFF (if it was already on), never newly ON.
+  const blocked = !!blockedBy;
+  return (
+    <label
+      className={`flex items-start gap-3 rounded-xl2 border p-4 shadow-card ${
+        blocked && !on ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+      } ${on ? 'border-brand-blue bg-brand-blueTint' : 'border-brand-line bg-white'}`}
+    >
+      <input
+        type="checkbox"
+        className="mt-1"
+        checked={on}
+        disabled={blocked && !on}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>
+        <span className="block text-sm font-semibold text-brand-ink">Price differs by pet type ({list})</span>
+        <span className="mt-0.5 block text-xs text-brand-slate">
+          {blocked
+            ? `${blockedBy}, so there's just one price for this plan.${on ? ' Untick this to fix the plan.' : ''}`
+            : on
+              ? `On — every slab and add-on has a separate ${types.join(' and ')} premium; the customer's pet type picks the price. The lower one is shown as a "from" price before they choose.`
+              : 'Off — one premium applies to every pet (the default). Turn on if this plan charges differently for dogs and cats.'}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+// The Dog / Cat price panels for one slab or add-on. Each panel has the same
+// linked Premium / GST % / GST amount / Premium-with-GST inputs as a single price.
+function PetTypePrices({ types, prices, premiumKey, premiumLabel, onChange }) {
+  return (
+    <div className="mt-4 rounded-lg bg-brand-bg p-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        {types.map((t) => {
+          const v = (prices && prices[t]) || {};
+          const Icon = t === 'Cat' ? Cat : Dog;
+          return (
+            <div key={t} className="rounded-lg border border-brand-line bg-white p-3">
+              <div className="mb-3 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-brand-blue">
+                <Icon size={14} /> {t}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={premiumLabel} required>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={v[premiumKey] ?? ''}
+                    onChange={(e) => onChange(t, premiumKey, e.target.value)}
+                  />
+                </Field>
+                <Field label="GST %">
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={v.gstPercent ?? ''}
+                    onChange={(e) => onChange(t, 'gstPercent', e.target.value)}
+                  />
+                </Field>
+                <Field label="GST amount (₹)" hint="or type instead of GST %">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={v.gstAmount ?? ''}
+                    onChange={(e) => onChange(t, 'gstAmount', e.target.value)}
+                  />
+                </Field>
+                <Field label="Premium with GST (₹)" hint="or type instead">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={v.premiumWithGst ?? ''}
+                    onChange={(e) => onChange(t, 'premiumWithGst', e.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, FileText, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
-import api, { BASE_URL } from '../api/axios.js';
+import api from '../api/axios.js';
 import Button from '../components/UI/Button.jsx';
 import { fetchFile } from '../lib/download.js';
+import MessagesPanel from '../components/notifications/MessagesPanel.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import { inr } from '../lib/format.js';
-
-const ASSET_BASE = BASE_URL.replace(/\/api\/?$/, '');
-const assetUrl = (u) => (u && /^https?:/.test(u) ? u : `${ASSET_BASE}${u || ''}`);
-const KIND_LABEL = { FRONT: 'Front', LEFT: 'Left', RIGHT: 'Right' };
+import { assetUrl, PET_PHOTO_KIND_LABEL as KIND_LABEL } from '../lib/assets.js';
 const STATUS_STYLES = {
   DRAFT: 'bg-brand-line/60 text-brand-slate',
   CONFIRMED: 'bg-green-100 text-green-700',
@@ -40,6 +39,7 @@ function Row({ k, v }) {
 export default function SaleView() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { admin } = useAuth();
   const [s, setS] = useState(null);
   const [notFound, setNotFound] = useState(false);
 
@@ -171,6 +171,15 @@ export default function SaleView() {
             <Row k="Cover period" v={`${fmtDate(s.policyStartDate)} — ${fmtDate(s.policyEndDate)}`} />
           </dl>
         </section>
+        {s.status === 'CONFIRMED' && (
+          <MessagesPanel
+            className="lg:col-span-2"
+            event="CERTIFICATE_ISSUED"
+            reference={s.reference}
+            saleId={s.id}
+            canSend={['SUPERADMIN', 'ADMIN'].includes(admin?.role)}
+          />
+        )}
       </div>
     </div>
   );

@@ -7,6 +7,11 @@ import EmptyState from '../components/UI/EmptyState.jsx';
 import Modal from '../components/UI/Modal.jsx';
 import Button from '../components/UI/Button.jsx';
 import { Field, Input, Select } from '../components/UI/Field.jsx';
+import PetPhotoCell from '../components/UI/PetPhotoCell.jsx';
+import DateRangePicker from '../components/UI/DateRangePicker.jsx';
+import { PRESETS, ALL_TIME_PRESET } from '../lib/dateRanges.js';
+
+const DATE_PRESETS = [ALL_TIME_PRESET, ...PRESETS];
 
 export const PROPOSAL_STATUS_STYLES = {
   OPEN: 'bg-brand-blueTint text-brand-blue',
@@ -17,7 +22,7 @@ export const PROPOSAL_STATUS_STYLES = {
 };
 const SOURCE_LABELS = { PARTNER_API: 'Partner API', WEBSITE: 'Website', ADMIN: 'Admin' };
 
-const BLANK = { customerName: '', customerMobile: '', customerEmail: '', petName: '', petBreed: '', petType: '', age: '', ageUnit: 'YEAR', petWeightKg: '' };
+const BLANK = { customerName: '', customerMobile: '', customerEmail: '', petName: '', petBreed: '', petType: '', age: '', ageUnit: 'YEAR', petWeightKg: '', notifyConsent: true };
 
 function fmtDate(d) {
   return d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -29,6 +34,7 @@ export default function Proposals() {
   const [meta, setMeta] = useState({ total: 0, openCount: 0 });
   const [catalog, setCatalog] = useState({ statuses: [], sources: [] });
   const [filters, setFilters] = useState({ status: '', source: '', q: '' });
+  const [range, setRange] = useState({ from: '', to: '', presetKey: 'all' });
   const [modal, setModal] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -37,6 +43,8 @@ export default function Proposals() {
     if (filters.status) params.status = filters.status;
     if (filters.source) params.source = filters.source;
     if (filters.q) params.q = filters.q;
+    if (range.from) params.from = range.from;
+    if (range.to) params.to = range.to;
     api
       .get('/proposals', { params })
       .then(({ data }) => {
@@ -44,7 +52,7 @@ export default function Proposals() {
         setMeta({ total: data.data.total, openCount: data.data.openCount });
       })
       .catch(() => setItems([]));
-  }, [filters]);
+  }, [filters, range.from, range.to]);
 
   useEffect(() => {
     api.get('/proposals/catalog').then(({ data }) => setCatalog(data.data)).catch(() => {});
@@ -73,6 +81,7 @@ export default function Proposals() {
         age: modal.age || undefined,
         ageUnit: modal.ageUnit,
         petWeightKg: modal.petWeightKg || undefined,
+        notifyConsent: !!modal.notifyConsent,
       });
       toast.success(`Created ${data.data.proposal.proposalNo}`);
       setModal(null);
@@ -112,6 +121,7 @@ export default function Proposals() {
             value={filters.q}
             onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
           />
+          <DateRangePicker value={range} onChange={setRange} presets={DATE_PRESETS} />
         </div>
         <Button onClick={() => setModal({ ...BLANK })}>
           <Plus size={16} /> New Proposal
@@ -140,12 +150,15 @@ export default function Proposals() {
             </span>
           </div>
           <div className="overflow-x-auto rounded-xl2 border border-brand-line bg-white shadow-card">
-            <table className="w-full min-w-[880px] text-sm">
+            <table className="w-full min-w-[1120px] text-sm">
               <thead>
                 <tr className="border-b border-brand-line bg-brand-bg text-left text-xs font-semibold uppercase tracking-wide text-brand-slate">
                   <th className="px-4 py-3">Proposal No</th>
                   <th className="px-4 py-3">Pet parent</th>
                   <th className="px-4 py-3">Pet</th>
+                  <th className="px-4 py-3">Front</th>
+                  <th className="px-4 py-3">Left</th>
+                  <th className="px-4 py-3">Right</th>
                   <th className="px-4 py-3">Source</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Created</th>
@@ -172,6 +185,15 @@ export default function Proposals() {
                       <div className="text-xs text-brand-slate">
                         {[p.pet.breed, p.pet.ageText].filter(Boolean).join(' · ') || '—'}
                       </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <PetPhotoCell photos={p.photos} kind="FRONT" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <PetPhotoCell photos={p.photos} kind="LEFT" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <PetPhotoCell photos={p.photos} kind="RIGHT" />
                     </td>
                     <td className="px-4 py-3 text-brand-slate">{SOURCE_LABELS[p.source] || p.source}</td>
                     <td className="px-4 py-3">
@@ -248,6 +270,13 @@ export default function Proposals() {
             <Field label="Weight (kg)">
               <Input value={modal.petWeightKg} onChange={(e) => setField('petWeightKg', e.target.value)} placeholder="e.g. 12.5" />
             </Field>
+            <label className="col-span-2 flex items-start gap-2 text-sm text-brand-ink">
+              <input type="checkbox" className="mt-0.5" checked={!!modal.notifyConsent} onChange={(e) => setField('notifyConsent', e.target.checked)} />
+              <span>
+                The customer agreed to receive updates on WhatsApp
+                <span className="block text-xs text-brand-slate">Email is always sent when an address is given. WhatsApp is sent only with this agreement.</span>
+              </span>
+            </label>
           </div>
         )}
       </Modal>

@@ -5,7 +5,7 @@ import { PRESETS, fmtRangeLabel, toISODate } from '../../lib/dateRanges.js';
 // Compact date-range control: a trigger button showing the current range, and a
 // dropdown with presets + a custom from/to pair. Calls onChange({ from, to,
 // presetKey }) — presetKey is null for a custom range.
-export default function DateRangePicker({ value, onChange }) {
+export default function DateRangePicker({ value, onChange, presets = PRESETS }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState({ from: value.from, to: value.to });
   const ref = useRef(null);
@@ -50,7 +50,7 @@ export default function DateRangePicker({ value, onChange }) {
       {open && (
         <div className="absolute right-0 z-20 mt-2 w-[320px] rounded-xl2 border border-brand-line bg-white p-3 shadow-panel">
           <div className="grid grid-cols-2 gap-1">
-            {PRESETS.map((p) => {
+            {presets.map((p) => {
               const active = value.presetKey === p.key;
               return (
                 <button

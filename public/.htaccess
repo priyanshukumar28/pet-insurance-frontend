@@ -1,0 +1,13 @@
+# Force HTTPS. The deployed bundle only ever calls the backend at
+# https://apipet.acrossassist.in and the backend's CORS allow-list only
+# contains the https:// origin — loading this app over plain http:// makes
+# every API call (login included) fail as a CORS error, since the browser's
+# Origin header is then "http://adminpet.acrossassist.in", which the backend
+# correctly does not allow.
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# SPA fallback: serve index.html for any request that isn't a real file
+# (client-side routes like /login, /proposals/PRP…) so React Router handles it.
+FallbackResource /index.html
